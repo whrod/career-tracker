@@ -117,11 +117,24 @@ function candidates(){
 }
 async function loadState(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error();const state=await r.json();profileProgress=state.profileProgress||{};skippedCandidates=state.skippedCandidates||{};canManageSkipped=state.canManageSkipped===true;if(!canManageSkipped)candidateFilter="active";DATA=state.data;apps=DATA.applications;REVIEW=state.reviews;LINKS=state.links;REQUESTS=state.requests||{};reviews();render();candidates();$('#stamp').textContent='마지막 확인 '+DATA.updatedAt+' · 한국 시간';$('#notice').textContent=DATA.notice;}catch{$('#notice').textContent='서버 기록을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요. 아래 내용은 배포 당시 자료이며 저장 상태를 확인할 수 없습니다.';$('#issues').innerHTML='<div class="empty">서버 연결 후 체크·메모를 사용할 수 있습니다.</div>';}}
 const originalLoadState=loadState;
+const manualApplicationForm=$('#manual-application');
+manualApplicationForm.onsubmit=async event=>{
+ event.preventDefault();
+ const fields=Object.fromEntries(new FormData(manualApplicationForm));
+ const status=$('#manual-application-status');
+ const button=manualApplicationForm.querySelector('button[type=submit]');
+ if(!await save('/api/manual-applications',fields,button,status))return;
+ manualApplicationForm.reset();
+ await loadState();
+ status.textContent='지원 현황에 접수로 등록했습니다. 후속 관리에서 다음 확인일을 볼 수 있습니다.';
+};
 $('#query').removeEventListener('input',oldRender);
 $('#platform').removeEventListener('change',oldRender);
 $('#query').addEventListener('input',()=>render());
 $('#platform').addEventListener('change',()=>render());
 loadState=async()=>{await originalLoadState();
+ manualApplicationForm.hidden=!canManageSkipped;
+ $('#manual-application-login').hidden=canManageSkipped;
  $('#stats').innerHTML=[['지원 회사',apps.length,'회사·동일 직무 중복 통합'],['진행 중',apps.filter(a=>!/불합격|철회|최종합격/.test(a.status)).length,'접수와 열람 상태 기준'],['면접 일정',apps.filter(a=>a.interview).length,'확인된 일정만 표시'],['중복 접수',apps.filter(a=>a.flag==='중복 접수').length,'추가 지원 전 확인']].map(x=>`<div class="stat"><span>${esc(x[0])}</span><strong>${x[1]}</strong><small>${esc(x[2])}</small></div>`).join('');
  $('#follow').innerHTML=[...new Set(apps.map(a=>a.checkDate))].sort().map(d=>`<article class="card"><h3>${esc(d)} · 상태 재확인</h3><p>${apps.filter(a=>a.checkDate===d).map(a=>esc(a.company)).join(' · ')}</p><p class="muted">내부 확인 일정입니다. 기업에 연락하는 동작은 별도 요청 시 진행합니다.</p></article>`).join('');
  $('#activitylog').innerHTML=DATA.activity.map(a=>`<p>${esc(a)}</p>`).join('');

@@ -1,7 +1,20 @@
 export function createWorker(html, seed) {
  const seedTodos={};
  const json=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
- const postingUrl=value=>String(value).split('#',1)[0].replace(/^https?:\/\/(?:www\.)?/i,'').replace(/\/(?=\?|$)/,'');
+ function postingUrl(value){
+  try{
+   const url=new URL(value);
+   const host=url.host.replace(/^www\./i,'');
+   const path=url.pathname.replace(/\/$/,'');
+   const rallit=host==='rallit.com'&&path.match(/^\/positions\/(\d+)(?:\/|$)/);
+   if(rallit)return host+'/positions/'+rallit[1];
+   for(const key of [...url.searchParams.keys()]){
+    if(/^utm_|^(?:fbclid|gclid)$/i.test(key))url.searchParams.delete(key);
+   }
+   url.searchParams.sort();
+   return host+path+url.search;
+  }catch{return String(value);}
+ }
  const samePosting=(a,b)=>[a.url,a.applyUrl].filter(Boolean).some(url=>[b.url,b.applyUrl].filter(Boolean).some(other=>postingUrl(url)===postingUrl(other)));
  function applicationsWithRecordedCandidates(data,recorded){
   const applications=[...data.applications];
@@ -11,6 +24,24 @@ export function createWorker(html, seed) {
   return applications;
  }
  const koreaDate=date=>date.toISOString().slice(0,10);
+ function applicationRecord(id,posting,source,applied='미확인'){
+  const now=new Date();
+  const localDate=new Date(now.getTime()+9*60*60*1000);
+  const followUp=new Date(localDate);
+  followUp.setUTCDate(followUp.getUTCDate()+7);
+  return {
+   id:'candidate-'+id,company:posting.company,role:posting.role,platform:posting.platform,
+   url:posting.url,applyUrl:posting.applyUrl,status:'접수',flag:'',
+   applied,checkedAt:now.toISOString(),checkDate:koreaDate(followUp),interview:null,result:null,
+   source:koreaDate(localDate)+' '+source,nextAction:'접수 확인과 전형 안내를 확인합니다.',documents:'제출 서류 미확인',
+   referenceLinks:[{label:'지원한 공고 원문',url:posting.url}]
+  };
+ }
+ async function saveApplication(db,id,application){
+  const path='$."'+id+'"';
+  const value=JSON.stringify(application);
+  await db.prepare("INSERT INTO career_records(key,value) VALUES('candidateApplications',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_insert(career_records.value,?,json(?))").bind(id,value,path,value).run();
+ }
  return {async fetch(req,env){
   const u=new URL(req.url);
   const visitorId=req.headers.get('oai-authenticated-user-id');
@@ -33,6 +64,29 @@ export function createWorker(html, seed) {
    if(req.headers.get('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'다른 출처의 요청'},403);
    const text=await req.text();if(text.length>500000)return json({error:'입력이 너무 큽니다'},413);
    const body=JSON.parse(text);
+   if(u.pathname==='/api/manual-applications'){
+    if(!visitorId)return json({error:'ChatGPT 로그인 후 지원 기록을 등록할 수 있습니다.'},401);
+    const {company,role,platform,url,applied=''}=body||{};
+    if(![company,role,platform].every(value=>typeof value==='string'&&value.trim()&&value.trim().length<=160)
+      ||typeof url!=='string'||url.length>2000||typeof applied!=='string'
+      ||(applied&&(!/^\d{4}-\d{2}-\d{2}$/.test(applied)||!Number.isFinite(Date.parse(applied))||koreaDate(new Date(applied))!==applied||applied>koreaDate(new Date(Date.now()+9*60*60*1000))))){
+     return json({error:'회사, 직무, 지원 채널, 공고 링크와 지원일을 확인해 주세요.'},400);
+    }
+    let parsed;
+    try{parsed=new URL(url.trim());}catch{return json({error:'공고 링크를 확인해 주세요.'},400);}
+    if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)return json({error:'http 또는 https 공고 링크를 입력해 주세요.'},400);
+    const posting={company:company.trim(),role:role.trim(),platform:platform.trim(),url:parsed.href};
+    const rows=await env.DB.prepare("SELECT key,value FROM career_records WHERE key IN ('snapshot','candidateApplications')").all();
+    const records=Object.fromEntries(rows.results.map(row=>[row.key,JSON.parse(row.value)]));
+    if(applicationsWithRecordedCandidates(records.snapshot||seed,records.candidateApplications||{}).some(item=>samePosting(item,posting))){
+     return json({error:'이미 지원 현황에 있는 공고입니다.'},409);
+    }
+    const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(postingUrl(parsed.href)));
+    const id='manual-'+Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+    const application=applicationRecord(id,posting,'지원 기록 직접 등록',applied||'미확인');
+    await saveApplication(env.DB,id,application);
+    return json({ok:true,id:application.id});
+   }
    const skipMatch=u.pathname.match(/^\/api\/skipped-candidates\/([\w-]{1,100})$/);
    if(skipMatch){
     if(!skippedKey)return json({error:'ChatGPT 로그인 후 저장할 수 있습니다.'},401);
@@ -64,21 +118,7 @@ export function createWorker(html, seed) {
     const candidate=data.candidates.find(a=>String(a.id)===candidateId);
     if(!candidate)return json({error:'등록된 지원 후보가 아닙니다.'},404);
     if(applicationsWithRecordedCandidates(data,recorded).some(a=>samePosting(a,candidate)))return json({ok:true});
-    const now=new Date();
-    const localDate=new Date(now.getTime()+9*60*60*1000);
-    const followUp=new Date(localDate);
-    followUp.setUTCDate(followUp.getUTCDate()+7);
-    const application={
-     id:'candidate-'+candidateId,company:candidate.company,role:candidate.role,platform:candidate.platform,
-     url:candidate.url,applyUrl:candidate.applyUrl,status:'접수',flag:'',
-     applied:'미확인',checkedAt:now.toISOString(),checkDate:koreaDate(followUp),interview:null,result:null,
-     source:koreaDate(localDate)+' 직접 지원 완료 체크',
-     nextAction:'접수 확인과 전형 안내를 확인합니다.',documents:'제출 서류 미확인',
-     referenceLinks:[{label:'지원한 공고 원문',url:candidate.url}]
-    };
-    const path='$."'+candidateId+'"';
-    const value=JSON.stringify(application);
-    await env.DB.prepare("INSERT INTO career_records(key,value) VALUES('candidateApplications',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_insert(career_records.value,?,json(?))").bind(candidateId,value,path,value).run();
+    await saveApplication(env.DB,candidateId,applicationRecord(candidateId,candidate,'직접 지원 완료 체크'));
     return json({ok:true});
    }
    const profileMatch=u.pathname.match(/^\/api\/profile-progress\/([\w-]{1,100})\/(edited|completed)$/);

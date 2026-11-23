@@ -11,12 +11,24 @@ export function createWorker(html, seed) {
     const data=JSON.parse(JSON.stringify(records.snapshot||seed));
     const applicationStatuses=records.applicationStatuses||{};
     for(const a of data.applications){const v=applicationStatuses[a.id];if(v){a.status=v.status;a.statusNote=v.note;a.statusUpdatedAt=v.updatedAt;a.result=/탈락|불합격|최종합격|철회/.test(v.status)?v.status:null;if(/탈락|불합격|철회/.test(v.status)){a.interview=null;a.nextAction='전형 종료. 제출 서류와 확인된 피드백을 보관합니다.';}}}
-    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses});
+    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{}});
    }
    if(req.method!=='PUT')return json({error:'허용되지 않은 요청'},405);
    if(req.headers.get('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'다른 출처의 요청'},403);
    const text=await req.text();if(text.length>500000)return json({error:'입력이 너무 큽니다'},413);
    const body=JSON.parse(text);
+   const profileMatch=u.pathname.match(/^\/api\/profile-progress\/([\w-]{1,100})\/(edited|completed)$/);
+   if(profileMatch){
+    if(typeof body?.checked!=='boolean')return json({error:'체크 상태를 확인해 주세요.'},400);
+    const [,id,field]=profileMatch;
+    const row=await env.DB.prepare("SELECT value FROM career_records WHERE key='snapshot'").first();
+    const data=row?JSON.parse(row.value):seed;
+    if(!data.profiles?.some(profile=>profile.id===id))return json({error:'등록된 플랫폼이 아닙니다.'},404);
+    const path='$."'+id+'"';
+    const value=JSON.stringify({[field]:body.checked});
+    await env.DB.prepare("INSERT INTO career_records(key,value) VALUES('profileProgress',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_set(career_records.value,?,json_patch(COALESCE(json_extract(career_records.value,?),'{}'),?))").bind(id,value,path,path,value).run();
+    return json({ok:true});
+   }
    const statusMatch=u.pathname.match(/^\/api\/application-status\/(\d+)$/);
    if(statusMatch){
     const allowed=['접수','서류 검토 중','서류 통과','1차 면접','2차 면접','최종 면접','최종합격','서류 탈락','면접 탈락','지원 철회'];

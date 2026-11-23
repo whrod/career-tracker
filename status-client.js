@@ -14,7 +14,7 @@ render=function(){
  const all=apps;
  try{apps=all.filter(a=>applicationFilter==='all'||applicationGroup(a)===applicationFilter);renderWithLinks();}finally{apps=all;}
  document.querySelectorAll('#rows tr').forEach(tr=>{
-  const app=apps.find(a=>tr.querySelector('.company')?.textContent===a.company);if(!app)return;
+  const app=apps.find(a=>String(a.id)===tr.dataset.applicationId);if(!app)return;
   const cell=tr.children[1],v=APPLICATION_STATUSES[app.id];
   if(isRejected(app))tr.classList.add('rejectedrow');
   const box=document.createElement('div');

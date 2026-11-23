@@ -1,6 +1,16 @@
 export function createWorker(html, seed) {
  const seedTodos={};
  const json=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
+ const postingUrl=value=>String(value).split('#',1)[0].replace(/^https?:\/\/(?:www\.)?/i,'').replace(/\/(?=\?|$)/,'');
+ const samePosting=(a,b)=>[a.url,a.applyUrl].filter(Boolean).some(url=>[b.url,b.applyUrl].filter(Boolean).some(other=>postingUrl(url)===postingUrl(other)));
+ function applicationsWithRecordedCandidates(data,recorded){
+  const applications=[...data.applications];
+  for(const application of Object.values(recorded)){
+   if(!applications.some(a=>a.id===application.id||samePosting(a,application)))applications.unshift(application);
+  }
+  return applications;
+ }
+ const koreaDate=date=>date.toISOString().slice(0,10);
  return {async fetch(req,env){
   const u=new URL(req.url);
   if(!u.pathname.startsWith('/api/')) return new Response(html,{headers:{'Content-Type':'text/html;charset=utf-8','Cache-Control':'no-store'}});
@@ -9,6 +19,8 @@ export function createWorker(html, seed) {
     const rows=await env.DB.prepare('SELECT key,value FROM career_records').all();
     const records=Object.fromEntries(rows.results.map(r=>[r.key,JSON.parse(r.value)]));
     const data=JSON.parse(JSON.stringify(records.snapshot||seed));
+    data.applications=applicationsWithRecordedCandidates(data,records.candidateApplications||{});
+    data.candidates=data.candidates.filter(candidate=>!data.applications.some(application=>samePosting(candidate,application)||application.id==='candidate-'+candidate.id));
     const applicationStatuses=records.applicationStatuses||{};
     for(const a of data.applications){const v=applicationStatuses[a.id];if(v){a.status=v.status;a.statusNote=v.note;a.statusUpdatedAt=v.updatedAt;a.result=/탈락|불합격|최종합격|철회/.test(v.status)?v.status:null;if(/탈락|불합격|철회/.test(v.status)){a.interview=null;a.nextAction='전형 종료. 제출 서류와 확인된 피드백을 보관합니다.';}}}
     return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{}});
@@ -17,6 +29,35 @@ export function createWorker(html, seed) {
    if(req.headers.get('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'다른 출처의 요청'},403);
    const text=await req.text();if(text.length>500000)return json({error:'입력이 너무 큽니다'},413);
    const body=JSON.parse(text);
+   const candidateMatch=u.pathname.match(/^\/api\/candidate-applications\/([\w-]{1,100})$/);
+   if(candidateMatch){
+    if(body?.confirmed!==true)return json({error:'지원 완료 여부를 확인해 주세요.'},400);
+    const candidateId=candidateMatch[1];
+    const rows=await env.DB.prepare("SELECT key,value FROM career_records WHERE key IN ('snapshot','candidateApplications')").all();
+    const records=Object.fromEntries(rows.results.map(row=>[row.key,JSON.parse(row.value)]));
+    const recorded=records.candidateApplications||{};
+    if(Object.hasOwn(recorded,candidateId))return json({ok:true});
+    const data=records.snapshot||seed;
+    const candidate=data.candidates.find(a=>String(a.id)===candidateId);
+    if(!candidate)return json({error:'등록된 지원 후보가 아닙니다.'},404);
+    if(applicationsWithRecordedCandidates(data,recorded).some(a=>samePosting(a,candidate)))return json({ok:true});
+    const now=new Date();
+    const localDate=new Date(now.getTime()+9*60*60*1000);
+    const followUp=new Date(localDate);
+    followUp.setUTCDate(followUp.getUTCDate()+7);
+    const application={
+     id:'candidate-'+candidateId,company:candidate.company,role:candidate.role,platform:candidate.platform,
+     url:candidate.url,applyUrl:candidate.applyUrl,status:'접수',flag:'',
+     applied:'미확인',checkedAt:now.toISOString(),checkDate:koreaDate(followUp),interview:null,result:null,
+     source:koreaDate(localDate)+' 직접 지원 완료 체크',
+     nextAction:'접수 확인과 전형 안내를 확인합니다.',documents:'제출 서류 미확인',
+     referenceLinks:[{label:'지원한 공고 원문',url:candidate.url}]
+    };
+    const path='$."'+candidateId+'"';
+    const value=JSON.stringify(application);
+    await env.DB.prepare("INSERT INTO career_records(key,value) VALUES('candidateApplications',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_insert(career_records.value,?,json(?))").bind(candidateId,value,path,value).run();
+    return json({ok:true});
+   }
    const profileMatch=u.pathname.match(/^\/api\/profile-progress\/([\w-]{1,100})\/(edited|completed)$/);
    if(profileMatch){
     if(typeof body?.checked!=='boolean')return json({error:'체크 상태를 확인해 주세요.'},400);
@@ -29,12 +70,13 @@ export function createWorker(html, seed) {
     await env.DB.prepare("INSERT INTO career_records(key,value) VALUES('profileProgress',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_set(career_records.value,?,json_patch(COALESCE(json_extract(career_records.value,?),'{}'),?))").bind(id,value,path,path,value).run();
     return json({ok:true});
    }
-   const statusMatch=u.pathname.match(/^\/api\/application-status\/(\d+)$/);
+   const statusMatch=u.pathname.match(/^\/api\/application-status\/(\d+|candidate-[\w-]{1,100})$/);
    if(statusMatch){
     const allowed=['접수','서류 검토 중','서류 통과','1차 면접','2차 면접','최종 면접','최종합격','서류 탈락','면접 탈락','지원 철회'];
     if(!allowed.includes(body.status)||typeof body.note!=='string'||body.note.length>5000)return json({error:'지원 상태와 메모를 확인해 주세요.'},400);
     const row=await env.DB.prepare("SELECT value FROM career_records WHERE key='snapshot'").first();const data=row?JSON.parse(row.value):seed;
-    const app=data.applications.find(a=>String(a.id)===statusMatch[1]);if(!app)return json({error:'등록된 지원이 아닙니다.'},404);
+    const recorded=await env.DB.prepare("SELECT value FROM career_records WHERE key='candidateApplications'").first();
+    const app=applicationsWithRecordedCandidates(data,recorded?JSON.parse(recorded.value):{}).find(a=>String(a.id)===statusMatch[1]);if(!app)return json({error:'등록된 지원이 아닙니다.'},404);
     const existing=await env.DB.prepare("SELECT value FROM career_records WHERE key='applicationStatuses'").first();
     const prev=existing?JSON.parse(existing.value)[statusMatch[1]]:null;
     const entry={status:body.status,note:body.note,updatedAt:new Date().toISOString()};

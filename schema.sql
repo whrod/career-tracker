@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS career_records (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

@@ -32,7 +32,74 @@ function reviews(){
 }
 const oldRender=render;
 render=function(){oldRender();document.querySelectorAll('#rows tr').forEach(tr=>{const a=apps.find(a=>String(a.id)===tr.dataset.applicationId);if(!a)return;const box=document.createElement('div');box.innerHTML=`${referenceLinks(a)}<div class="userlinks">${(LINKS[a.id]||[]).map(l=>`<div><a href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener">${esc(l.label||'추가 링크')}</a></div>`).join('')}</div><details class="editlinks" data-id="${a.id}"><summary>지원·접수 링크 추가 및 수정</summary><p class="muted">공고, 접수 확인, 기업 채용 페이지 등을 연결하세요.</p><div class="linkfields"></div><button class="btn addlink">링크 추가</button> <button class="btn savelinks">링크 저장</button><div class="saved" role="status"></div></details>`;tr.firstElementChild.append(box);const details=box.querySelector('details'),fields=box.querySelector('.linkfields');const add=(l={})=>{const row=document.createElement('div');row.className='linkrow';row.innerHTML=`<input aria-label="링크 이름" placeholder="예: 기업 지원내역" value="${esc(l.label||'')}"><input aria-label="지원 링크 주소" type="url" placeholder="https://" value="${esc(l.url||'')}"><button class="btn remove">삭제</button>`;row.querySelector('button').onclick=()=>row.remove();fields.append(row);};(LINKS[a.id]||[]).forEach(add);box.querySelector('.addlink').onclick=()=>add();box.querySelector('.savelinks').onclick=async e=>{const links=[...fields.children].map(r=>({label:r.querySelectorAll('input')[0].value.trim(),url:r.querySelectorAll('input')[1].value.trim()})).filter(l=>l.url||l.label);if(links.some(l=>safeUrl(l.url)==='#')){details.querySelector('[role=status]').textContent='http 또는 https 주소를 입력하세요.';return;}if(await save('/api/links/'+a.id,links,e.target,details.querySelector('[role=status]'))){LINKS[a.id]=links;box.querySelector('.userlinks').innerHTML=links.map(l=>`<div><a href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener">${esc(l.label||'추가 링크')}</a></div>`).join('');}};});};
-function candidates(){ $('#newjobs').innerHTML=DATA.candidates.length?DATA.candidates.map(a=>`<article class="card"><span class="badge">${esc(a.priority||'검토 후보')}</span><h3>${esc(a.company)} · ${esc(a.role)}</h3><p>${esc(a.fit||a.reason||'')}</p><p>마감: ${esc(a.deadline||'미확인')} · 경력: ${esc(a.experience||'미확인')}</p><p>${esc(a.conditions||'급여·출장·통근 조건은 원문 확인 결과에 따릅니다.')}</p><p class="muted">${esc(a.gaps||'')} · 확인: ${esc(a.verifiedAt||DATA.updatedAt)}</p><a class="btn" href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener">공고 원문 보기</a> <a class="btn" href="${esc(safeUrl(a.applyUrl||a.url))}" target="_blank" rel="noopener">직접 지원하기</a><p><label><input type="checkbox" data-candidate-id="${esc(a.id)}"> 지원 완료</label></p><div role="status" class="saved"></div></article>`).join(''):'<div class="empty">현재 등록된 신규 지원 후보가 없습니다. 다음 검색에서 접수 중임을 확인한 공고와 직접 지원할 링크를 여기에 추가합니다.</div>';
+
+let skippedCandidates={};
+let canManageSkipped=false;
+let candidateFilter='active';
+
+function candidateDecision(candidate, record){
+ const id=esc(candidate.id);
+ const current=DATA.candidates.some(item=>item.id===candidate.id);
+ if(!canManageSkipped)return '';
+ return `<details ${record?'open':''} data-candidate-decision="${id}">
+ <summary>${record?'지원 안 함 이유':'지원 안 함'}</summary>
+ <label>이유 메모 (선택)<textarea maxlength="5000">${esc(record?.note||'')}</textarea></label>
+ <div class="toolbar">
+ <button class="btn" data-skip-action="save">${record?'메모 저장':'지원 안 함으로 이동'}</button>
+ ${record?`<button class="btn" data-skip-action="restore">${current?'지원 후보로 되돌리기':'지원 안 함 표시 해제'}</button>`:''}
+ </div><div class="saved" role="status"></div></details>`;
+}
+
+function candidates(){
+ const active=DATA.candidates.filter(item=>!Object.hasOwn(skippedCandidates,item.id));
+ const skipped=Object.values(skippedCandidates);
+ const filters=$('#candidatefilters');
+ filters.innerHTML=canManageSkipped
+  ? `<button class="btn" data-candidate-filter="active" aria-pressed="${candidateFilter==='active'}">검토 중 (${active.length})</button>
+     <button class="btn" data-candidate-filter="skipped" aria-pressed="${candidateFilter==='skipped'}">지원 안 함 (${skipped.length})</button>`
+  : '<a class="btn" target="_top" href="/signin-with-chatgpt?return_to=%2F%23candidates">지원 안 함·메모 관리를 위해 로그인</a>';
+ const cards=candidateFilter==='skipped'
+  ? skipped.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(record=>({candidate:record.candidate,record}))
+  : active.map(candidate=>({candidate}));
+ $('#newjobs').innerHTML=cards.map(({candidate:a,record})=>`<article class="card">
+ <span class="badge">${record?'지원 안 함':esc(a.priority||'검토 후보')}</span>
+ <h3>${esc(a.company)} · ${esc(a.role)}</h3>
+ <p>${esc(a.fit||a.reason||'')}</p>
+ <p>마감 ${esc(a.deadline||'미확인')} · 경력 ${esc(a.experience||'미확인')}</p>
+ <p>${esc(a.conditions||'급여·출장·통근 조건은 원문 확인 결과에 따릅니다.')}</p>
+ <p class="muted">${esc(a.gaps||'')} · 확인 ${esc(a.verifiedAt||DATA.updatedAt)}</p>
+ <a class="btn" href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener">공고 원문 보기</a>
+ ${record?'':`<a class="btn" href="${esc(safeUrl(a.applyUrl||a.url))}" target="_blank" rel="noopener">직접 지원하기</a>
+ <p><label><input type="checkbox" data-candidate-id="${esc(a.id)}"> 지원 완료</label></p><div role="status" class="saved"></div>`}
+ ${candidateDecision(a,record)}</article>`).join('') || `<div class="empty">${candidateFilter==='skipped'?'지원 안 함으로 표시한 공고가 없습니다.':'검토 중인 지원 후보가 없습니다.'}</div>`;
+
+ filters.querySelectorAll('button').forEach(button=>button.onclick=()=>{
+  candidateFilter=button.dataset.candidateFilter;
+  candidates();
+  filters.querySelector('[aria-pressed=true]')?.focus();
+ });
+ $('#newjobs').querySelectorAll('[data-skip-action]').forEach(button=>button.onclick=async()=>{
+  const details=button.closest('[data-candidate-decision]');
+  const id=details.dataset.candidateDecision;
+  const skipped=button.dataset.skipAction==='save';
+  const note=details.querySelector('textarea').value.trim();
+  const fields=[...details.querySelectorAll('button, textarea')];
+  fields.forEach(field=>field.disabled=true);
+  if(!await save('/api/skipped-candidates/'+encodeURIComponent(id),{skipped,note},button,details.querySelector('[role=status]'))){
+   fields.forEach(field=>field.disabled=false);
+   return;
+  }
+  if(skipped){
+   const candidate=DATA.candidates.find(item=>item.id===id)||skippedCandidates[id].candidate;
+   skippedCandidates[id]={candidate,note,updatedAt:new Date().toISOString()};
+  }else delete skippedCandidates[id];
+  candidates();
+  $('#candidatefeedback').textContent=skipped
+   ? '지원 안 함과 메모를 저장했습니다.'
+   : '지원 안 함 표시를 해제했습니다.';
+  filters.querySelector('[aria-pressed=true]')?.focus();
+ });
+
  document.querySelectorAll('[data-candidate-id]').forEach(checkbox=>{
   checkbox.onchange=async()=>{
    if(!checkbox.checked)return;
@@ -48,7 +115,7 @@ function candidates(){ $('#newjobs').innerHTML=DATA.candidates.length?DATA.candi
   };
  });
 }
-async function loadState(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error();const state=await r.json();profileProgress=state.profileProgress||{};DATA=state.data;apps=DATA.applications;REVIEW=state.reviews;LINKS=state.links;REQUESTS=state.requests||{};reviews();render();candidates();$('#stamp').textContent='마지막 확인 '+DATA.updatedAt+' · 한국 시간';$('#notice').textContent=DATA.notice;}catch{$('#notice').textContent='서버 기록을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요. 아래 내용은 배포 당시 자료이며 저장 상태를 확인할 수 없습니다.';$('#issues').innerHTML='<div class="empty">서버 연결 후 체크·메모를 사용할 수 있습니다.</div>';}}
+async function loadState(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error();const state=await r.json();profileProgress=state.profileProgress||{};skippedCandidates=state.skippedCandidates||{};canManageSkipped=state.canManageSkipped===true;if(!canManageSkipped)candidateFilter="active";DATA=state.data;apps=DATA.applications;REVIEW=state.reviews;LINKS=state.links;REQUESTS=state.requests||{};reviews();render();candidates();$('#stamp').textContent='마지막 확인 '+DATA.updatedAt+' · 한국 시간';$('#notice').textContent=DATA.notice;}catch{$('#notice').textContent='서버 기록을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요. 아래 내용은 배포 당시 자료이며 저장 상태를 확인할 수 없습니다.';$('#issues').innerHTML='<div class="empty">서버 연결 후 체크·메모를 사용할 수 있습니다.</div>';}}
 const originalLoadState=loadState;
 $('#query').removeEventListener('input',oldRender);
 $('#platform').removeEventListener('change',oldRender);

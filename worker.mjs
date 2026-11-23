@@ -13,6 +13,8 @@ export function createWorker(html, seed) {
  const koreaDate=date=>date.toISOString().slice(0,10);
  return {async fetch(req,env){
   const u=new URL(req.url);
+  const visitorId=req.headers.get('oai-authenticated-user-id');
+  const skippedKey=visitorId?'skippedCandidates:'+visitorId:null;
   if(!u.pathname.startsWith('/api/')) return new Response(html,{headers:{'Content-Type':'text/html;charset=utf-8','Cache-Control':'no-store'}});
   try {
    if(req.method==='GET'&&u.pathname==='/api/state'){
@@ -23,12 +25,33 @@ export function createWorker(html, seed) {
     data.candidates=data.candidates.filter(candidate=>!data.applications.some(application=>samePosting(candidate,application)||application.id==='candidate-'+candidate.id));
     const applicationStatuses=records.applicationStatuses||{};
     for(const a of data.applications){const v=applicationStatuses[a.id];if(v){a.status=v.status;a.statusNote=v.note;a.statusUpdatedAt=v.updatedAt;a.result=/탈락|불합격|최종합격|철회/.test(v.status)?v.status:null;if(/탈락|불합격|철회/.test(v.status)){a.interview=null;a.nextAction='전형 종료. 제출 서류와 확인된 피드백을 보관합니다.';}}}
-    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{}});
+    const skippedCandidates=Object.fromEntries(Object.entries(records[skippedKey]||{}).filter(([id,{candidate}])=>
+     !data.applications.some(application=>application.id==='candidate-'+id||samePosting(candidate,application))));
+    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{},skippedCandidates,canManageSkipped:!!visitorId});
    }
    if(req.method!=='PUT')return json({error:'허용되지 않은 요청'},405);
    if(req.headers.get('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'다른 출처의 요청'},403);
    const text=await req.text();if(text.length>500000)return json({error:'입력이 너무 큽니다'},413);
    const body=JSON.parse(text);
+   const skipMatch=u.pathname.match(/^\/api\/skipped-candidates\/([\w-]{1,100})$/);
+   if(skipMatch){
+    if(!skippedKey)return json({error:'ChatGPT 로그인 후 저장할 수 있습니다.'},401);
+    if(typeof body?.skipped!=='boolean'||(body.skipped&&(typeof body.note!=='string'||body.note.length>5000)))return json({error:'지원 안 함 메모는 5,000자 이내로 입력하세요.'},400);
+    const id=skipMatch[1];
+    const path='$."'+id+'"';
+    if(!body.skipped){
+     await env.DB.prepare("UPDATE career_records SET value=json_remove(value,?) WHERE key=?").bind(path,skippedKey).run();
+     return json({ok:true});
+    }
+    const rows=await env.DB.prepare("SELECT key,value FROM career_records WHERE key IN ('snapshot',?,'candidateApplications')").bind(skippedKey).all();
+    const records=Object.fromEntries(rows.results.map(row=>[row.key,JSON.parse(row.value)]));
+    const data=records.snapshot||seed;
+    const candidate=data.candidates.find(item=>item.id===id)||records[skippedKey]?.[id]?.candidate;
+    if(!candidate||applicationsWithRecordedCandidates(data,records.candidateApplications||{}).some(application=>application.id==='candidate-'+id||samePosting(candidate,application)))return json({error:'등록된 지원 후보가 아닙니다.'},404);
+    const value=JSON.stringify({candidate,note:body.note.trim(),updatedAt:new Date().toISOString()});
+    await env.DB.prepare("INSERT INTO career_records(key,value) VALUES(?,json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_set(career_records.value,?,json(?))").bind(skippedKey,id,value,path,value).run();
+    return json({ok:true});
+   }
    const candidateMatch=u.pathname.match(/^\/api\/candidate-applications\/([\w-]{1,100})$/);
    if(candidateMatch){
     if(body?.confirmed!==true)return json({error:'지원 완료 여부를 확인해 주세요.'},400);

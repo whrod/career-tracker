@@ -27,13 +27,26 @@ function interviewEditor(app){
  return box;
 }
 const isRejected=a=>/탈락|불합격/.test(a.status);
-const isClosed=a=>/탈락|불합격|최종합격|철회/.test(a.status);
-const applicationGroup=a=>isRejected(a)?'rejected':/최종합격/.test(a.status)?'accepted':/철회/.test(a.status)?'withdrawn':'active';
+const isClosed=a=>/탈락|불합격|최종\s*합격|철회/.test(a.status);
+const applicationGroups={
+ active:{label:'진행 중',title:'접수·서류 검토 중인 지원'},
+ screened:{label:'서류 합격',title:'서류 합격·면접 전형'},
+ rejected:{label:'탈락',title:'탈락한 지원'},
+ accepted:{label:'최종 합격',title:'최종 합격한 지원'},
+ withdrawn:{label:'철회',title:'철회한 지원'},
+ all:{label:'전체',title:'전체 지원 기록'}
+};
+function applicationGroup(a){
+ if(isRejected(a))return 'rejected';
+ if(/최종\s*합격/.test(a.status))return 'accepted';
+ if(/철회/.test(a.status))return 'withdrawn';
+ if(/서류\s*(통과|합격)|면접|처우\s*협의/.test(a.status))return 'screened';
+ return 'active';
+}
 function statusFilters(){
- const groups=[['active','진행 중'],['rejected','탈락'],['accepted','합격'],['withdrawn','철회'],['all','전체']];
- $('#applicationfilters').innerHTML=groups.map(([id,label])=>`<button class="btn" data-appfilter="${id}" aria-pressed="${applicationFilter===id}">${label} (${id==='all'?apps.length:apps.filter(a=>applicationGroup(a)===id).length})</button>`).join('');
+ $('#applicationfilters').innerHTML=Object.entries(applicationGroups).map(([id,{label}])=>`<button class="btn" data-appfilter="${id}" aria-pressed="${applicationFilter===id}">${label} (${id==='all'?apps.length:apps.filter(a=>applicationGroup(a)===id).length})</button>`).join('');
  document.querySelectorAll('[data-appfilter]').forEach(b=>b.onclick=()=>{applicationFilter=b.dataset.appfilter;render();});
- $('#applicationtitle').textContent=({active:'진행 중인 지원',rejected:'탈락한 지원',accepted:'합격한 지원',withdrawn:'철회한 지원',all:'전체 지원 기록'})[applicationFilter];
+ $('#applicationtitle').textContent=applicationGroups[applicationFilter].title;
 }
 const renderWithLinks=render;
 render=function(){
@@ -50,7 +63,10 @@ render=function(){
   cell.append(box);box.querySelector('.savestatus').onclick=async e=>{
    const value={status:box.querySelector('select').value,note:box.querySelector('textarea').value};
    if(!await save('/api/application-status/'+app.id,value,e.target,box.querySelector('[role=status]')))return;
-   await loadState();$('#applicationfeedback').textContent='저장했습니다. '+(/탈락|불합격/.test(value.status)?'탈락 목록에서 확인할 수 있습니다.':'변경한 상태의 목록에서 확인할 수 있습니다.');
+   const group=applicationGroup(value);
+   if(applicationFilter===applicationGroup(app))applicationFilter=group;
+   await loadState();
+   $('#applicationfeedback').textContent=app.company+'의 전형 상태를 저장했습니다. '+applicationGroups[group].label+' 탭에서 확인할 수 있습니다.';
   };
   if(!isClosed(app)){
    const statusEditor=box.querySelector('details');

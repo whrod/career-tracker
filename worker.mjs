@@ -46,6 +46,7 @@ export function createWorker(html, seed) {
   const u=new URL(req.url);
   const visitorId=req.headers.get('oai-authenticated-user-id');
   const skippedKey=visitorId?'skippedCandidates:'+visitorId:null;
+  const interviewKey=visitorId?'interviewSchedules:'+visitorId:null;
   if(!u.pathname.startsWith('/api/')) return new Response(html,{headers:{'Content-Type':'text/html;charset=utf-8','Cache-Control':'no-store'}});
   try {
    if(req.method==='GET'&&u.pathname==='/api/state'){
@@ -58,12 +59,34 @@ export function createWorker(html, seed) {
     for(const a of data.applications){const v=applicationStatuses[a.id];if(v){a.status=v.status;a.statusNote=v.note;a.statusUpdatedAt=v.updatedAt;a.result=/탈락|불합격|최종합격|철회/.test(v.status)?v.status:null;if(/탈락|불합격|철회/.test(v.status)){a.interview=null;a.nextAction='전형 종료. 제출 서류와 확인된 피드백을 보관합니다.';}}}
     const skippedCandidates=Object.fromEntries(Object.entries(records[skippedKey]||{}).filter(([id,{candidate}])=>
      !data.applications.some(application=>application.id==='candidate-'+id||samePosting(candidate,application))));
-    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{},skippedCandidates,canManageSkipped:!!visitorId});
+    const interviewSchedules=interviewKey?records[interviewKey]||{}:{};
+    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{},skippedCandidates,canManageSkipped:!!visitorId,interviewSchedules,canManageInterviews:!!interviewKey});
    }
    if(req.method!=='PUT')return json({error:'허용되지 않은 요청'},405);
    if(req.headers.get('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'다른 출처의 요청'},403);
    const text=await req.text();if(text.length>500000)return json({error:'입력이 너무 큽니다'},413);
    const body=JSON.parse(text);
+   const interviewMatch=u.pathname.match(/^\/api\/interviews\/(\d+|candidate-[\w-]{1,100})$/);
+   if(interviewMatch){
+    if(!interviewKey)return json({error:'ChatGPT 로그인 후 면접 일정을 저장할 수 있습니다.'},401);
+    const {date,time,location='',note=''}=body||{};
+    if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||koreaDate(new Date(date))!==date
+      ||typeof time!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)
+      ||typeof location!=='string'||location.length>500||typeof note!=='string'||note.length>2000){
+     return json({error:'면접 날짜와 시간, 장소 및 메모를 확인해 주세요.'},400);
+    }
+    const id=interviewMatch[1];
+    const rows=await env.DB.prepare("SELECT key,value FROM career_records WHERE key IN ('snapshot','candidateApplications','applicationStatuses')").all();
+    const records=Object.fromEntries(rows.results.map(row=>[row.key,JSON.parse(row.value)]));
+    const app=applicationsWithRecordedCandidates(records.snapshot||seed,records.candidateApplications||{}).find(item=>String(item.id)===id);
+    if(!app)return json({error:'등록된 지원이 아닙니다.'},404);
+    if(/탈락|불합격|최종합격|철회/.test(records.applicationStatuses?.[id]?.status||app.status)){
+     return json({error:'종료된 전형입니다.'},409);
+    }
+    const value=JSON.stringify({date,time,location:location.trim(),note:note.trim()});
+    await env.DB.prepare("INSERT INTO career_records(key,value) VALUES(?,json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_set(career_records.value,?,json(?))").bind(interviewKey,id,value,'$."'+id+'"',value).run();
+    return json({ok:true});
+   }
    if(u.pathname==='/api/manual-applications'){
     if(!visitorId)return json({error:'ChatGPT 로그인 후 지원 기록을 등록할 수 있습니다.'},401);
     const {company,role,platform,url,applied=''}=body||{};

@@ -8,8 +8,7 @@ function interviewEditor(app){
   box.innerHTML='<a href="/signin-with-chatgpt?return_to=%2F" target="_top">로그인하여 면접 일정 추가</a>';
   return box;
  }
- const saved=schedule?`<p><span class="badge">면접</span> ${esc(interviewTime(schedule))}</p>`:'';
- box.innerHTML=`${saved}<details class="statuseditor"><summary>${schedule?'면접 일정 수정':'면접 일정 추가'}</summary>
+ box.innerHTML=`<details class="statuseditor"><summary>${schedule?'면접 일정 수정':'면접 일정 추가'}</summary>
  <form>
  <label>면접 날짜 <input name="date" type="date" value="${esc(schedule?.date||'')}" required></label>
  <label>면접 시간 (한국 시간) <input name="time" type="time" value="${esc(schedule?.time||'')}" required></label>
@@ -44,7 +43,6 @@ render=function(){
  document.querySelectorAll('#rows tr').forEach(tr=>{
   const app=apps.find(a=>String(a.id)===tr.dataset.applicationId);if(!app)return;
   const cell=tr.children[1],v=APPLICATION_STATUSES[app.id];
-  if(!isClosed(app))tr.children[3].append(interviewEditor(app));
   if(isRejected(app))tr.classList.add('rejectedrow');
   const box=document.createElement('div');
   const options=['접수','서류 검토 중','서류 통과','1차 면접','2차 면접','최종 면접','최종합격','서류 탈락','면접 탈락','지원 철회'];if(!options.includes(app.status))options.unshift(app.status);
@@ -54,6 +52,21 @@ render=function(){
    if(!await save('/api/application-status/'+app.id,value,e.target,box.querySelector('[role=status]')))return;
    await loadState();$('#applicationfeedback').textContent='저장했습니다. '+(/탈락|불합격/.test(value.status)?'탈락 목록에서 확인할 수 있습니다.':'변경한 상태의 목록에서 확인할 수 있습니다.');
   };
+  if(!isClosed(app)){
+   const statusEditor=box.querySelector('details');
+   const editor=interviewEditor(app);
+   statusEditor.append(editor);
+   const schedule=interviewSchedules[app.id];
+   const shortcut=document.createElement('div');
+   shortcut.innerHTML=`${schedule?`<p><span class="badge">면접</span> ${esc(interviewTime(schedule))}</p>`:''}<button class="btn" type="button">${schedule?'면접 일정 수정':'면접 일정 추가'}</button>`;
+   tr.children[3].append(shortcut);
+   shortcut.querySelector('button').onclick=()=>{
+    statusEditor.open=true;
+    const fields=editor.querySelector('details');
+    if(fields)fields.open=true;
+    editor.querySelector('input, a')?.focus();
+   };
+  }
  });
 }
 const loadBeforeStatuses=loadState;

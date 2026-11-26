@@ -50,8 +50,11 @@ function candidateDecision(candidate, record){
  </div><div class="saved" role="status"></div></details>`;
 }
 
+const reviewingCandidates=()=>DATA.candidates.filter(item=>!Object.hasOwn(skippedCandidates,item.id));
 function candidates(){
- const active=DATA.candidates.filter(item=>!Object.hasOwn(skippedCandidates,item.id));
+ const active=reviewingCandidates();
+ const count=$('#reviewingcandidatecount');
+ if(count)count.textContent=active.length;
  const skipped=Object.values(skippedCandidates);
  const filters=$('#candidatefilters');
  filters.innerHTML=canManageSkipped

@@ -96,6 +96,7 @@ loadState=async()=>{
  }catch{}
  await loadBeforeStatuses();render();
  $('#stats').innerHTML=[['지원 회사',apps.length,'회사·동일 직무 중복 통합'],['진행 중',apps.filter(a=>!isClosed(a)).length,'종료된 전형 제외'],['면접 일정',apps.filter(a=>(a.interview||interviewSchedules[a.id])&&!isClosed(a)).length,'확인된 일정만 표시'],['탈락',apps.filter(isRejected).length,'서류·면접 탈락 기록']].map(x=>`<div class="stat"><span>${esc(x[0])}</span><strong>${x[1]}</strong><small>${esc(x[2])}</small></div>`).join('');
+ $('#stats').insertAdjacentHTML('beforeend',`<div class="stat"><span>지원 후보</span><strong id="reviewingcandidatecount">${reviewingCandidates().length}</strong><small>검토 중</small></div>`);
  const active=apps.filter(a=>!isClosed(a));
  const followCards=[...new Set(active.map(a=>a.checkDate).filter(Boolean))].sort().map(d=>`<article class="card"><h3>${esc(d)} · 상태 재확인</h3><p>${active.filter(a=>a.checkDate===d).map(a=>esc(a.company)).join(' · ')}</p><p class="muted">진행 중인 지원만 표시합니다.</p></article>`);
  const interviews=active.filter(a=>interviewSchedules[a.id])

@@ -21,7 +21,6 @@ function decorateOrder(name){
  const items=new Map([...container.querySelectorAll(view.selector)].map(item=>[item.dataset[view.key],item]));
  const all=orderedKeys(name);
  const visible=all.filter(id=>items.has(id));
- const ranks=new Map(all.map((id,index)=>[id,index+1]));
  // Move existing elements so expanded forms and unsaved edits stay with their items.
  visible.forEach((id,index)=>{
   const item=items.get(id);
@@ -36,7 +35,7 @@ function decorateOrder(name){
   controls.className='ordercontrols';
   const label=view.priority?'우선순위':'위치';
   controls.innerHTML=`<span class="orderhandle" draggable="true" title="드래그하여 순서 변경" aria-hidden="true">⠿</span>
-   <label>${label} <select aria-label="${label} 변경">${visible.map((other,i)=>`<option value="${i}" ${other===id?'selected':''}>${view.priority?ranks.get(other):i+1}</option>`).join('')}</select></label>`;
+   <label>${label} <select aria-label="${label} 변경">${visible.map((other,i)=>`<option value="${i}" ${other===id?'selected':''}>${i+1}</option>`).join('')}</select></label>`;
   const select=controls.querySelector('select');
   const handle=controls.querySelector('.orderhandle');
   const disabled=visible.length<2||savingOrders.has(name);

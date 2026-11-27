@@ -2,7 +2,7 @@ param([switch]$Push)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot -Parent
 $source=[IO.Path]::GetFullPath((Join-Path $repo '../이직관리'))
-$files=@('build.mjs','client-extra.js','profiles-client.js','todos-client.js','status-client.js','list-order-client.js','template.html','worker.mjs','package.json')
+$files=@('build.mjs','client-extra.js','profiles-client.js','todos-client.js','status-client.js','list-order-client.js','interview-feedback-client.js','interview-feedback.mjs','template.html','worker.mjs','package.json')
 foreach($name in $files) {
   $text=Get-Content -LiteralPath (Join-Path $source $name) -Raw
   if($name -eq 'worker.mjs') {
@@ -18,7 +18,7 @@ foreach($name in $files) {
 if($Push) {
   Push-Location $repo
   try {
-    & git add -- build.mjs client-extra.js profiles-client.js todos-client.js status-client.js list-order-client.js template.html worker.mjs package.json scripts README.md .gitignore data.example.json schema.sql
+    & git add -- @files scripts README.md .gitignore data.example.json schema.sql
     if($LASTEXITCODE -ne 0){throw 'git add failed'}
     & git diff --cached --quiet
     if($LASTEXITCODE -eq 1){& git commit -m 'Update sanitized career tracker source';if($LASTEXITCODE -ne 0){throw 'git commit failed'}}

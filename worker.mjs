@@ -42,8 +42,11 @@ export function createWorker(html, seed) {
   const value=JSON.stringify(application);
   await db.prepare("INSERT INTO career_records(key,value) VALUES('candidateApplications',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_insert(career_records.value,?,json(?))").bind(id,value,path,value).run();
  }
- return {async fetch(req,env){
+ return {async fetch(req,env,ctx){
   const u=new URL(req.url);
+  if(u.pathname===interviewFeedbackPath||u.pathname.startsWith(interviewFeedbackPath+'/')){
+   return handleInterviewFeedback(req,env,ctx,u);
+  }
   const visitorId=req.headers.get('oai-authenticated-user-id');
   const skippedKey=visitorId?'skippedCandidates:'+visitorId:null;
   const interviewKey=visitorId?'interviewSchedules:'+visitorId:null;

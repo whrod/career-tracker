@@ -60,12 +60,22 @@ export function createWorker(html, seed) {
     const skippedCandidates=Object.fromEntries(Object.entries(records[skippedKey]||{}).filter(([id,{candidate}])=>
      !data.applications.some(application=>application.id==='candidate-'+id||samePosting(candidate,application))));
     const interviewSchedules=interviewKey?records[interviewKey]||{}:{};
-    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,profileProgress:records.profileProgress||{},skippedCandidates,canManageSkipped:!!visitorId,interviewSchedules,canManageInterviews:!!interviewKey});
+    return json({data,reviews:records.reviews||{},links:records.links||{},requests:records.requests||{},todos:records.todos||seedTodos,applicationStatuses,listOrders:records.listOrders||{},profileProgress:records.profileProgress||{},skippedCandidates,canManageSkipped:!!visitorId,interviewSchedules,canManageInterviews:!!interviewKey});
    }
    if(req.method!=='PUT')return json({error:'허용되지 않은 요청'},405);
    if(req.headers.get('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'다른 출처의 요청'},403);
    const text=await req.text();if(text.length>500000)return json({error:'입력이 너무 큽니다'},413);
    const body=JSON.parse(text);
+   const orderMatch=u.pathname.match(/^\/api\/list-order\/(applications|candidates|todos)$/);
+   if(orderMatch){
+    const ids=body?.ids;
+    if(!Array.isArray(ids)||ids.length>5000||!ids.every(id=>typeof id==='string'&&/^[\w-]{1,110}$/.test(id))||new Set(ids).size!==ids.length){
+     return json({error:'목록 순서를 확인해 주세요.'},400);
+    }
+    const list=orderMatch[1],value=JSON.stringify(ids);
+    await env.DB.prepare("INSERT INTO career_records(key,value) VALUES('listOrders',json_object(?,json(?))) ON CONFLICT(key) DO UPDATE SET value=json_set(career_records.value,?,json(?))").bind(list,value,'$.'+list,value).run();
+    return json({ok:true});
+   }
    const interviewMatch=u.pathname.match(/^\/api\/interviews\/(\d+|candidate-[\w-]{1,100})$/);
    if(interviewMatch){
     if(!interviewKey)return json({error:'ChatGPT 로그인 후 면접 일정을 저장할 수 있습니다.'},401);

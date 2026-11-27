@@ -64,7 +64,7 @@ function candidates(){
  const cards=candidateFilter==='skipped'
   ? skipped.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(record=>({candidate:record.candidate,record}))
   : active.map(candidate=>({candidate}));
- $('#newjobs').innerHTML=cards.map(({candidate:a,record})=>`<article class="card">
+ $('#newjobs').innerHTML=cards.map(({candidate:a,record})=>`<article class="card" data-order-candidate="${esc(a.id)}">
  <span class="badge">${record?'지원 안 함':esc(a.priority||'검토 후보')}</span>
  <h3>${esc(a.company)} · ${esc(a.role)}</h3>
  <p>${esc(a.fit||a.reason||'')}</p>
@@ -118,7 +118,7 @@ function candidates(){
   };
  });
 }
-async function loadState(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error();const state=await r.json();profileProgress=state.profileProgress||{};skippedCandidates=state.skippedCandidates||{};canManageSkipped=state.canManageSkipped===true;if(!canManageSkipped)candidateFilter="active";DATA=state.data;apps=DATA.applications;REVIEW=state.reviews;LINKS=state.links;REQUESTS=state.requests||{};reviews();render();candidates();$('#stamp').textContent='마지막 확인 '+DATA.updatedAt+' · 한국 시간';$('#notice').textContent=DATA.notice;}catch{$('#notice').textContent='서버 기록을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요. 아래 내용은 배포 당시 자료이며 저장 상태를 확인할 수 없습니다.';$('#issues').innerHTML='<div class="empty">서버 연결 후 체크·메모를 사용할 수 있습니다.</div>';}}
+async function loadState(){try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error();const state=await r.json();listOrders=state.listOrders||{};profileProgress=state.profileProgress||{};skippedCandidates=state.skippedCandidates||{};canManageSkipped=state.canManageSkipped===true;if(!canManageSkipped)candidateFilter="active";DATA=state.data;apps=DATA.applications;REVIEW=state.reviews;LINKS=state.links;REQUESTS=state.requests||{};reviews();render();candidates();$('#stamp').textContent='마지막 확인 '+DATA.updatedAt+' · 한국 시간';$('#notice').textContent=DATA.notice;}catch{$('#notice').textContent='서버 기록을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요. 아래 내용은 배포 당시 자료이며 저장 상태를 확인할 수 없습니다.';$('#issues').innerHTML='<div class="empty">서버 연결 후 체크·메모를 사용할 수 있습니다.</div>';}}
 const originalLoadState=loadState;
 const manualApplicationForm=$('#manual-application');
 manualApplicationForm.onsubmit=async event=>{

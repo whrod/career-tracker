@@ -29,7 +29,8 @@ function interviewEditor(app){
 const isRejected=a=>/탈락|불합격/.test(a.status);
 const isClosed=a=>/탈락|불합격|최종\s*합격|철회/.test(a.status);
 const applicationGroups={
- active:{label:'진행 중',title:'접수·서류 검토 중인 지원'},
+ ongoing:{label:'진행 중',title:'진행 중인 전체 지원'},
+ active:{label:'접수·검토',title:'접수·서류 검토 중인 지원'},
  screened:{label:'서류 합격',title:'서류 합격·면접 전형'},
  rejected:{label:'탈락',title:'탈락한 지원'},
  accepted:{label:'최종 합격',title:'최종 합격한 지원'},
@@ -43,8 +44,11 @@ function applicationGroup(a){
  if(/서류\s*(통과|합격)|면접|처우\s*협의/.test(a.status))return 'screened';
  return 'active';
 }
+function matchesApplicationFilter(app,filter){
+ return filter==='all'||(filter==='ongoing'?!isClosed(app):applicationGroup(app)===filter);
+}
 function statusFilters(){
- $('#applicationfilters').innerHTML=Object.entries(applicationGroups).map(([id,{label}])=>`<button class="btn" data-appfilter="${id}" aria-pressed="${applicationFilter===id}">${label} (${id==='all'?apps.length:apps.filter(a=>applicationGroup(a)===id).length})</button>`).join('');
+ $('#applicationfilters').innerHTML=Object.entries(applicationGroups).map(([id,{label}])=>`<button class="btn" data-appfilter="${id}" aria-pressed="${applicationFilter===id}">${label} (${apps.filter(a=>matchesApplicationFilter(a,id)).length})</button>`).join('');
  document.querySelectorAll('[data-appfilter]').forEach(b=>b.onclick=()=>{applicationFilter=b.dataset.appfilter;render();});
  $('#applicationtitle').textContent=applicationGroups[applicationFilter].title;
 }
@@ -52,7 +56,7 @@ const renderWithLinks=render;
 render=function(){
  statusFilters();
  const all=apps;
- try{apps=all.filter(a=>applicationFilter==='all'||applicationGroup(a)===applicationFilter);renderWithLinks();}finally{apps=all;}
+ try{apps=all.filter(a=>matchesApplicationFilter(a,applicationFilter));renderWithLinks();}finally{apps=all;}
  document.querySelectorAll('#rows tr').forEach(tr=>{
   const app=apps.find(a=>String(a.id)===tr.dataset.applicationId);if(!app)return;
   const cell=tr.children[1],v=APPLICATION_STATUSES[app.id];
@@ -85,6 +89,39 @@ render=function(){
   }
  });
 }
+function openStatCard(tab,section,filter){
+ if(tab==='applications'){
+  applicationFilter=filter;
+  $('#query').value='';
+  $('#platform').value='';
+  render();
+ }
+ if(tab==='candidates'){
+  candidateFilter='active';
+  candidates();
+ }
+ document.querySelector('[data-tab="'+tab+'"]').click();
+ const heading=$(section);
+ heading.focus({preventScroll:true});
+ heading.scrollIntoView({block:'start'});
+}
+
+function renderStatCards(active,interviews){
+ const cards=[
+  {label:'지원 회사',count:apps.length,note:'회사·동일 직무 중복 통합',tab:'applications',section:'#applicationtitle',filter:'all'},
+  {label:'진행 중',count:active.length,note:'종료된 전형 제외',tab:'applications',section:'#applicationtitle',filter:'ongoing'},
+  {label:'면접 일정',count:interviews.length,note:'확인된 일정만 표시',tab:'next',section:'#interview-title'},
+  {label:'탈락',count:apps.filter(isRejected).length,note:'서류·면접 탈락 기록',tab:'applications',section:'#applicationtitle',filter:'rejected'},
+  {label:'지원 후보',count:reviewingCandidates().length,note:'검토 중',tab:'candidates',section:'#candidate-title',countId:'reviewingcandidatecount'}
+ ];
+ const stats=$('#stats');
+ stats.innerHTML=cards.map(({label,count,note,countId})=>`<button type="button" class="stat stat-link"><span>${label}</span><strong${countId?` id="${countId}"`:''}>${count}</strong><small>${note}</small></button>`).join('');
+ [...stats.children].forEach((button,index)=>{
+  const {tab,section,filter}=cards[index];
+  button.onclick=()=>openStatCard(tab,section,filter);
+ });
+}
+
 const loadBeforeStatuses=loadState;
 loadState=async()=>{
  try{
@@ -95,18 +132,19 @@ loadState=async()=>{
   canManageInterviews=state.canManageInterviews===true;
  }catch{}
  await loadBeforeStatuses();render();
- $('#stats').innerHTML=[['지원 회사',apps.length,'회사·동일 직무 중복 통합'],['진행 중',apps.filter(a=>!isClosed(a)).length,'종료된 전형 제외'],['면접 일정',apps.filter(a=>(a.interview||interviewSchedules[a.id])&&!isClosed(a)).length,'확인된 일정만 표시'],['탈락',apps.filter(isRejected).length,'서류·면접 탈락 기록']].map(x=>`<div class="stat"><span>${esc(x[0])}</span><strong>${x[1]}</strong><small>${esc(x[2])}</small></div>`).join('');
- $('#stats').insertAdjacentHTML('beforeend',`<div class="stat"><span>지원 후보</span><strong id="reviewingcandidatecount">${reviewingCandidates().length}</strong><small>검토 중</small></div>`);
  const active=apps.filter(a=>!isClosed(a));
  const followCards=[...new Set(active.map(a=>a.checkDate).filter(Boolean))].sort().map(d=>`<article class="card"><h3>${esc(d)} · 상태 재확인</h3><p>${active.filter(a=>a.checkDate===d).map(a=>esc(a.company)).join(' · ')}</p><p class="muted">진행 중인 지원만 표시합니다.</p></article>`);
- const interviews=active.filter(a=>interviewSchedules[a.id])
-  .sort((a,b)=>interviewTime(interviewSchedules[a.id]).localeCompare(interviewTime(interviewSchedules[b.id])));
- const interviewCards=interviews.map(a=>{
-  const schedule=interviewSchedules[a.id];
-  const location=schedule.location ? `<p>${esc(schedule.location)}</p>` : '';
-  const note=schedule.note ? `<p style="white-space:pre-wrap">${esc(schedule.note)}</p>` : '';
-  return `<article class="card"><h3>${esc(a.company)} · 면접</h3><p>${esc(a.role)}<br>${esc(interviewTime(schedule))}</p>${location}${note}</article>`;
+ const interviews=active.map(app=>{
+  const schedule=interviewSchedules[app.id];
+  return {app,schedule,time:schedule?interviewTime(schedule):app.interview};
+ }).filter(item=>item.time).sort((a,b)=>a.time.localeCompare(b.time));
+ const interviewCards=interviews.map(({app,schedule,time})=>{
+  const location=schedule?.location ? `<p>${esc(schedule.location)}</p>` : '';
+  const note=schedule?.note ? `<p style="white-space:pre-wrap">${esc(schedule.note)}</p>` : '';
+  return `<article class="card"><h3>${esc(app.company)} · 면접</h3><p>${esc(app.role)}<br>${esc(time)}</p>${location}${note}</article>`;
  });
- $('#follow').innerHTML=[...interviewCards,...followCards].join('')||'<div class="empty">진행 중인 후속 일정이 없습니다.</div>';
+ $('#interview-list').innerHTML=interviewCards.join('')||'<div class="empty">확인된 면접 일정이 없습니다.</div>';
+ $('#follow').innerHTML=followCards.join('')||'<div class="empty">진행 중인 후속 일정이 없습니다.</div>';
+ renderStatCards(active,interviews);
 };
 
